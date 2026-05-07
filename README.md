@@ -1,8 +1,10 @@
 # Soziopolis Reader
 
-Personal Rust desktop tool for saving Soziopolis articles locally and managing LingQ import workflows.
+Personal Rust desktop tool for saving Soziopolis articles locally and managing
+LingQ import workflows.
 
-I built this for my own Soziopolis -> LingQ workflow. It works for me, and I have not tried to make it into a general-purpose app.
+I built this for my own Soziopolis -> LingQ workflow. It works for me, and I
+have not tried to make it into a general-purpose app.
 
 There is no CLI path here. Everything happens in the GUI.
 
@@ -23,7 +25,8 @@ cd soziopolis-reader
 cargo run
 ```
 
-`cargo build --release` writes the executable to `target\release\soziopolis_lingq_tool.exe`.
+`cargo build --release` writes the executable to
+`target\release\soziopolis_lingq_tool.exe`.
 
 ## Windows Build
 
@@ -40,7 +43,8 @@ To refresh a portable folder build:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-portable.ps1 -NoDesktopShortcut
 ```
 
-On a new PC, LingQ usually needs to be reconnected once because the token lives in Windows Credential Manager for that machine.
+On a new PC, LingQ usually needs to be reconnected once because the token lives
+in Windows Credential Manager for that machine.
 
 ## Installer Build
 
@@ -62,7 +66,9 @@ By default the SQLite database lives at:
 
 `%LOCALAPPDATA%\soziopolis_lingq_tool\soziopolis_lingq_tool.db`
 
-The app also supports a portable layout automatically. If the executable sits beside a folder named `data` or `portable_data`, it stores settings and the SQLite database there instead of `%LOCALAPPDATA%`.
+The app also supports a portable layout automatically. If the executable sits
+beside a folder named `data` or `portable_data`, it stores settings and the
+SQLite database there instead of `%LOCALAPPDATA%`.
 
 Expected portable structure:
 
@@ -80,15 +86,19 @@ data/
 
 On Windows, LingQ tokens are stored in Windows Credential Manager rather than `settings.json`.
 
-The internal storage folder keeps the historical `soziopolis_lingq_tool` name so existing installs and upgrades continue to find the same data.
+The internal storage folder keeps the historical `soziopolis_lingq_tool` name so
+existing installs and upgrades continue to find the same data.
 
-If you want the app and its data in a custom location, use the portable layout instead of the default `%LOCALAPPDATA%` location.
+If you want the app and its data in a custom location, use the portable layout
+instead of the default `%LOCALAPPDATA%` location.
 
 ## Notes
 
 - This is packaged and tested as a Windows desktop tool.
-- The scraper is tuned for Soziopolis article pages and section listings as they existed on April 16, 2026.
+- The scraper is tuned for Soziopolis article pages and section listings as they
+  existed on April 16, 2026.
 - If Soziopolis changes its markup, the scraping selectors may need an update.
-- If LingQ changes its API behavior, the import/upload flow may need an update too.
+- If LingQ changes its API behavior, the import/upload flow may need an update
+  too.
 
 A few implementation notes live in [docs/dev-notes.md](docs/dev-notes.md).
