@@ -549,6 +549,64 @@ mod tests {
     }
 
     #[test]
+    fn article_cleanup_fixture_extracts_article_without_page_chrome() -> Result<()> {
+        let html = include_str!("../tests/fixtures/soziopolis_article_cleanup_fixture.html");
+        let document = Html::parse_document(html);
+
+        let title = first_text(
+            &document,
+            &[
+                "h1.article-title",
+                "h1",
+                "meta[property=\"og:title\"]",
+                "title",
+            ],
+        )
+        .map(|value| value.replace(" | Soziopolis", "").trim().to_owned())
+        .expect("fixture title");
+        let subtitle = first_text(
+            &document,
+            &["h2.article-subtitle", "meta[name=\"description\"]"],
+        )
+        .expect("fixture subtitle");
+        let author = collect_authors(&document);
+        let date = first_text(
+            &document,
+            &[
+                ".article-date",
+                "time",
+                "meta[property=\"article:published_time\"]",
+            ],
+        )
+        .expect("fixture date");
+        let section = extract_section(&document).expect("fixture section");
+        let body = extract_body(&document)?;
+        let clean_text = build_clean_text(&title, &subtitle, &author, &date, &body);
+
+        assert_eq!(title, "Der Alltag der Algorithmen");
+        assert_eq!(
+            subtitle,
+            "Wie digitale Sortierungen soziale Routinen veraendern"
+        );
+        assert_eq!(author, "Mara Beispiel, Jens Muster");
+        assert_eq!(date, "23.04.2026");
+        assert_eq!(normalize_article_date(&date).as_deref(), Some("2026-04-23"));
+        assert_eq!(section, "Essay");
+        assert!(body.contains("Digitale Sortierungen treten selten"));
+        assert!(body.contains("## Routinen und Reibungen"));
+        assert!(body.contains("- Die beobachteten Routinen verbinden"));
+        assert!(body.contains("Entscheidend ist nicht die einzelne Bewertung"));
+        assert!(!body.contains("Artikel lesen"));
+        assert!(!body.contains("Teilen auf Facebook"));
+        assert!(!body.contains("ISSN 2509-5196"));
+        assert!(!body.contains("Zum Seitenanfang"));
+        assert!(!body.contains("Newsletter abonnieren"));
+        assert!(clean_text.contains("Von Mara Beispiel, Jens Muster"));
+        assert!(clean_text.contains("23.04.2026"));
+        Ok(())
+    }
+
+    #[test]
     fn section_fixture_discovers_unique_articles_and_teasers() -> Result<()> {
         let client = SoziopolisClient::new()?;
         let document = Html::parse_document(include_str!(
