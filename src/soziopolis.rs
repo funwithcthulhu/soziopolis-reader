@@ -316,68 +316,7 @@ impl SoziopolisClient {
 
     pub fn fetch_article(&self, url: &str) -> Result<Article> {
         let html = self.fetch_html(url)?;
-        let document = Html::parse_document(&html);
-
-        let title = first_text(
-            &document,
-            &[
-                "h1.article-title",
-                "h1",
-                "meta[property=\"og:title\"]",
-                "title",
-            ],
-        )
-        .map(|value| value.replace(" | Soziopolis", "").trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "Untitled".to_owned());
-
-        let subtitle = first_text(
-            &document,
-            &["h2.article-subtitle", "meta[name=\"description\"]"],
-        )
-        .unwrap_or_default();
-
-        let author = collect_authors(&document);
-        let date = first_text(
-            &document,
-            &[
-                ".article-date",
-                "time",
-                "meta[property=\"article:published_time\"]",
-            ],
-        )
-        .or_else(|| extract_date_from_html(&html))
-        .unwrap_or_default();
-        let section = extract_section(&document)
-            .or_else(|| infer_section_from_url(url))
-            .unwrap_or_else(|| "Soziopolis".to_owned());
-
-        let body_text = extract_body(&document)?;
-        let word_count = body_text.split_whitespace().count();
-        if word_count < 80 {
-            bail!("article extraction produced too little text for {url}");
-        }
-
-        let clean_text = build_clean_text(&title, &subtitle, &author, &date, &body_text);
-
-        let published_at = normalize_article_date(&date).unwrap_or_default();
-
-        Ok(Article {
-            url: url.to_owned(),
-            title,
-            subtitle,
-            teaser: String::new(),
-            author,
-            date,
-            published_at,
-            section,
-            source_kind: "article".to_owned(),
-            source_label: source_label(url),
-            body_text,
-            clean_text,
-            word_count,
-            fetched_at: iso_timestamp_now(),
-        })
+        parse_article_html(url, &html)
     }
 
     pub fn fetch_article_metadata(&self, url: &str) -> Result<ArticleMetadata> {
@@ -496,6 +435,71 @@ fn merge_all_sections_states(
     }
 }
 
+fn parse_article_html(url: &str, html: &str) -> Result<Article> {
+    let document = Html::parse_document(html);
+
+    let title = first_text(
+        &document,
+        &[
+            "h1.article-title",
+            "h1",
+            "meta[property=\"og:title\"]",
+            "title",
+        ],
+    )
+    .map(|value| value.replace(" | Soziopolis", "").trim().to_owned())
+    .filter(|value| !value.is_empty())
+    .unwrap_or_else(|| "Untitled".to_owned());
+
+    let subtitle = first_text(
+        &document,
+        &["h2.article-subtitle", "meta[name=\"description\"]"],
+    )
+    .unwrap_or_default();
+
+    let author = collect_authors(&document);
+    let date = first_text(
+        &document,
+        &[
+            ".article-date",
+            "time",
+            "meta[property=\"article:published_time\"]",
+        ],
+    )
+    .or_else(|| extract_date_from_html(html))
+    .unwrap_or_default();
+    let section = extract_section(&document)
+        .or_else(|| infer_section_from_url(url))
+        .unwrap_or_else(|| "Soziopolis".to_owned());
+
+    let body_text = extract_body(&document)?;
+    let word_count = body_text.split_whitespace().count();
+    if word_count < 80 {
+        bail!("article extraction produced too little text for {url}");
+    }
+
+    let clean_text = build_clean_text(&title, &subtitle, &author, &date, &body_text);
+
+    let published_at = normalize_article_date(&date).unwrap_or_default();
+
+    Ok(Article {
+        url: url.to_owned(),
+        title,
+        subtitle,
+        teaser: String::new(),
+        author,
+        date,
+        published_at,
+        section,
+        source_kind: "article".to_owned(),
+        source_label: source_label(url),
+        body_text,
+        clean_text,
+        word_count,
+        fetched_at: iso_timestamp_now(),
+    })
+}
+
 fn iso_timestamp_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let now = SystemTime::now()
@@ -603,6 +607,45 @@ mod tests {
         assert!(!body.contains("Newsletter abonnieren"));
         assert!(clean_text.contains("Von Mara Beispiel, Jens Muster"));
         assert!(clean_text.contains("23.04.2026"));
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_article_url_reports_network_failure_without_live_request() {
+        let client = SoziopolisClient::new().expect("client should build");
+
+        let error = client
+            .fetch_article("not a url")
+            .expect_err("invalid URL should fail before any live network request");
+        let message = error.to_string();
+
+        assert!(message.contains("network: request failed for not a url"));
+        assert!(message.contains("builder error") || message.contains("relative URL"));
+    }
+
+    #[test]
+    fn malformed_article_page_reports_missing_body() {
+        let html = include_str!("../tests/fixtures/soziopolis_malformed_article_fixture.html");
+
+        let error = parse_article_html("https://www.soziopolis.de/unvollstaendig.html", html)
+            .expect_err("malformed fixture should not produce an article");
+
+        assert_eq!(error.to_string(), "could not extract article body");
+    }
+
+    #[test]
+    fn missing_title_uses_existing_untitled_fallback_when_body_is_present() -> Result<()> {
+        let html = include_str!("../tests/fixtures/soziopolis_missing_title_article_fixture.html");
+
+        let article = parse_article_html("https://www.soziopolis.de/ohne-titel.html", html)?;
+
+        assert_eq!(article.title, "Untitled");
+        assert_eq!(article.author, "Test Autorin");
+        assert_eq!(article.date, "02.05.2026");
+        assert_eq!(article.published_at, "2026-05-02");
+        assert_eq!(article.section, "Essay");
+        assert!(article.word_count >= 80);
+        assert!(article.clean_text.starts_with("Untitled\nVon Test Autorin"));
         Ok(())
     }
 

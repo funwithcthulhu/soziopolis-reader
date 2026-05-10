@@ -190,7 +190,13 @@ fn queue_snapshot_and_history_round_trip_through_context() {
     assert_eq!(restored_snapshot.next_job_id, 12);
     assert!(restored_snapshot.queue_paused);
     assert_eq!(restored_snapshot.queued_jobs.len(), 1);
-    assert_eq!(restored_snapshot.failed_fetches.len(), 1);
+    assert_eq!(
+        restored_snapshot.failed_fetches[0].url,
+        "https://example.com/fail"
+    );
+    assert_eq!(restored_snapshot.failed_fetches[0].title, "Failed");
+    assert_eq!(restored_snapshot.failed_fetches[0].category, "network");
+    assert_eq!(restored_snapshot.failed_fetches[0].message, "timed out");
     assert_eq!(restored_snapshot.failed_uploads.len(), 1);
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].label, "Upload completed");
