@@ -624,11 +624,11 @@ mod tests {
     }
 
     #[test]
-    fn malformed_article_page_reports_missing_body() {
+    fn page_chrome_without_article_reports_missing_body() {
         let html = include_str!("../tests/fixtures/soziopolis_malformed_article_fixture.html");
 
         let error = parse_article_html("https://www.soziopolis.de/unvollstaendig.html", html)
-            .expect_err("malformed fixture should not produce an article");
+            .expect_err("page chrome without article content should not produce an article");
 
         assert_eq!(error.to_string(), "could not extract article body");
     }
