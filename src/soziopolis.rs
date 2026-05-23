@@ -650,6 +650,88 @@ mod tests {
     }
 
     #[test]
+    fn unexpected_article_container_markup_reports_missing_body() {
+        let html = r#"
+            <!doctype html>
+            <html lang="de">
+            <body>
+              <article>
+                <h1 class="article-title">Neue Containerstruktur</h1>
+                <p class="article-date">07.05.2026</p>
+                <section class="article-body">
+                  <p>Dieser Text steht absichtlich nicht in .article-content.</p>
+                </section>
+              </article>
+            </body>
+            </html>
+        "#;
+
+        let error = parse_article_html("https://www.soziopolis.de/neue-struktur.html", html)
+            .expect_err("unexpected container markup should not produce an article");
+
+        assert_eq!(error.to_string(), "could not extract article body");
+    }
+
+    #[test]
+    fn inline_links_footnotes_and_emphasis_are_cleaned_in_body_blocks() -> Result<()> {
+        let html = r#"
+            <!doctype html>
+            <html lang="de">
+            <body>
+              <article>
+                <p class="article-type">Essay</p>
+                <p class="article-overline"><span class="author-name">Inline Test</span></p>
+                <p class="article-date">08.05.2026</p>
+                <h1 class="article-title">Inline Marker im Artikeltext</h1>
+                <h2 class="article-subtitle">Eine Prüfung vorhandener Bereinigung</h2>
+                <div class="article-content">
+                  <p>Der erste Absatz enthält <a href="/x">einen Link</a>, <em>betonte Begriffe</em> und eine Fussnote [1], die beim Bereinigen entfernt wird.</p>
+                  <p>Der zweite Absatz stabilisiert den Umfang der Fixture mit Beobachtungen zu digitalen Routinen, institutionellen Entscheidungen und sozialwissenschaftlichen Deutungen.</p>
+                  <p>Der dritte Absatz beschreibt, wie Formulare, Rankings und redaktionelle Hinweise in alltäglichen Arbeitsprozessen auftauchen und neue Erwartungen erzeugen.</p>
+                  <p>Der vierte Absatz hält fest, dass die Extraktion Inline-Markup als Text liest und keine Navigations- oder Quellverweise daraus machen soll.</p>
+                  <p>Der fünfte Absatz sorgt dafür, dass die bestehende Mindestlänge der Artikelverarbeitung überschritten wird, ohne neue Regeln einzuführen.</p>
+                </div>
+              </article>
+            </body>
+            </html>
+        "#;
+
+        let article = parse_article_html("https://www.soziopolis.de/inline-marker.html", html)?;
+
+        assert_eq!(article.title, "Inline Marker im Artikeltext");
+        assert!(article.body_text.contains("einen Link"));
+        assert!(article.body_text.contains("betonte Begriffe"));
+        assert!(!article.body_text.contains("[1]"));
+        assert!(article.word_count >= 80);
+        Ok(())
+    }
+
+    #[test]
+    fn very_short_article_text_reports_too_little_text() {
+        let html = r#"
+            <!doctype html>
+            <html lang="de">
+            <body>
+              <article>
+                <h1 class="article-title">Kurzer Artikel</h1>
+                <div class="article-content">
+                  <p>Dieser Absatz ist lang genug fuer einen Block, aber zu kurz fuer einen Artikel.</p>
+                </div>
+              </article>
+            </body>
+            </html>
+        "#;
+
+        let error = parse_article_html("https://www.soziopolis.de/kurz.html", html)
+            .expect_err("short extracted body should fail the current minimum length rule");
+
+        assert_eq!(
+            error.to_string(),
+            "article extraction produced too little text for https://www.soziopolis.de/kurz.html"
+        );
+    }
+
+    #[test]
     fn section_fixture_discovers_unique_articles_and_teasers() -> Result<()> {
         let client = SoziopolisClient::new()?;
         let document = Html::parse_document(include_str!(
