@@ -78,7 +78,7 @@ fn write_line(level: &str, message: &str) {
     }
 }
 
-fn sanitize_message(message: &str) -> String {
+pub(crate) fn sanitize_message(message: &str) -> String {
     let mut sanitized = message.to_owned();
     for pattern in redaction_patterns() {
         sanitized = pattern

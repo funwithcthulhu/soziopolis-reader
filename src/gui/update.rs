@@ -1027,12 +1027,33 @@ impl App {
 }
 
 fn create_support_bundle(app: &App) -> Result<PathBuf, String> {
-    let bundles_dir = app_paths::support_bundles_dir().map_err(|e| e.to_string())?;
+    let paths = SupportBundlePaths {
+        bundles_dir: app_paths::support_bundles_dir().map_err(|e| e.to_string())?,
+        settings_path: app_paths::settings_path().ok(),
+        log_path: app_paths::app_log_path().ok(),
+        database_path: app_paths::database_path().ok(),
+    };
+    create_support_bundle_with_paths(app, &paths)
+}
+
+struct SupportBundlePaths {
+    bundles_dir: PathBuf,
+    settings_path: Option<PathBuf>,
+    log_path: Option<PathBuf>,
+    database_path: Option<PathBuf>,
+}
+
+fn create_support_bundle_with_paths(
+    app: &App,
+    paths: &SupportBundlePaths,
+) -> Result<PathBuf, String> {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs().to_string())
         .unwrap_or_else(|_| "now".to_owned());
-    let bundle_dir = bundles_dir.join(format!("support-bundle-{timestamp}"));
+    let bundle_dir = paths
+        .bundles_dir
+        .join(format!("support-bundle-{timestamp}"));
     fs::create_dir_all(&bundle_dir).map_err(|e| e.to_string())?;
 
     let mut summary = vec![format!("Soziopolis Reader {}", env!("CARGO_PKG_VERSION"))];
@@ -1051,20 +1072,20 @@ fn create_support_bundle(app: &App) -> Result<PathBuf, String> {
 
     fs::write(bundle_dir.join("README.txt"), summary.join("\r\n")).map_err(|e| e.to_string())?;
 
-    if let Ok(path) = app_paths::settings_path()
+    if let Some(path) = &paths.settings_path
         && path.exists()
     {
-        let _ = fs::copy(&path, bundle_dir.join("settings.json"));
+        let _ = fs::copy(path, bundle_dir.join("settings.json"));
     }
-    if let Ok(path) = app_paths::app_log_path()
+    if let Some(path) = &paths.log_path
         && path.exists()
     {
-        let _ = fs::copy(&path, bundle_dir.join("soziopolis-reader.log"));
+        let _ = fs::copy(path, bundle_dir.join("soziopolis-reader.log"));
     }
-    if let Ok(path) = app_paths::database_path()
+    if let Some(path) = &paths.database_path
         && path.exists()
     {
-        let _ = fs::copy(&path, bundle_dir.join("soziopolis_lingq_tool.db"));
+        let _ = fs::copy(path, bundle_dir.join("soziopolis_lingq_tool.db"));
         for extra_path in [path.with_extension("db-wal"), path.with_extension("db-shm")] {
             if extra_path.exists()
                 && let Some(name) = extra_path.file_name()
@@ -1079,8 +1100,16 @@ fn create_support_bundle(app: &App) -> Result<PathBuf, String> {
         queue_paused: app.queue_paused,
         queued_jobs: app.queued_jobs.iter().cloned().collect(),
         completed_jobs: app.completed_jobs.iter().cloned().collect(),
-        failed_fetches: app.failed_fetches.clone(),
-        failed_uploads: app.last_failed_uploads.clone(),
+        failed_fetches: app
+            .failed_fetches
+            .iter()
+            .map(redact_failed_fetch_item)
+            .collect(),
+        failed_uploads: app
+            .last_failed_uploads
+            .iter()
+            .map(redact_upload_failure)
+            .collect(),
     };
     let queue_snapshot_json =
         serde_json::to_string_pretty(&queue_snapshot).map_err(|e| e.to_string())?;
@@ -1097,8 +1126,8 @@ fn create_support_bundle(app: &App) -> Result<PathBuf, String> {
                     "[{}] {}: {} {}",
                     failure.kind.label(),
                     failure.operation,
-                    failure.message,
-                    details
+                    logging::sanitize_message(&failure.message),
+                    logging::sanitize_message(details)
                 )
             })
             .collect::<Vec<_>>()
@@ -1108,4 +1137,195 @@ fn create_support_bundle(app: &App) -> Result<PathBuf, String> {
     }
 
     Ok(bundle_dir)
+}
+
+fn redact_failed_fetch_item(item: &FailedFetchItem) -> FailedFetchItem {
+    FailedFetchItem {
+        url: logging::sanitize_message(&item.url),
+        title: item.title.clone(),
+        category: item.category.clone(),
+        message: logging::sanitize_message(&item.message),
+    }
+}
+
+fn redact_upload_failure(item: &UploadFailure) -> UploadFailure {
+    UploadFailure {
+        article_id: item.article_id,
+        title: item.title.clone(),
+        message: logging::sanitize_message(&item.message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        app_error::{AppError, AppErrorKind},
+        settings::AppSettings,
+        soziopolis::DiscoverySourceKind,
+    };
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{label}_{unique}"))
+    }
+
+    fn test_app(settings_path: PathBuf) -> App {
+        App {
+            app_context: None,
+            app_context_error: None,
+            settings: SettingsStore::from_parts(settings_path, AppSettings::default()),
+            current_view: View::Diagnostics,
+            notice: None,
+            browse_request_id: 0,
+            content_refresh_request_id: 0,
+            browse_section: "essays".to_owned(),
+            browse_limit: 80,
+            browse_scope: BrowseScope::CurrentSection,
+            browse_articles: Vec::new(),
+            browse_report: None,
+            browse_scope_label: "Current section".to_owned(),
+            browse_search: String::new(),
+            browse_selected: HashSet::new(),
+            browse_only_new: true,
+            browse_imported_urls: HashSet::new(),
+            browse_loading: false,
+            browse_end_reached: false,
+            browse_session_state: None,
+            batch_fetching: false,
+            failed_fetches: vec![FailedFetchItem {
+                url: "https://example.invalid/article?api_key=SECRET_TOKEN_123".to_owned(),
+                title: "Failed import".to_owned(),
+                category: "fetch".to_owned(),
+                message: "Authorization: Token SECRET_TOKEN_123 timed out".to_owned(),
+            }],
+            import_progress: None,
+            upload_progress: None,
+            preview_article: None,
+            preview_stored_article: None,
+            preview_loading: false,
+            show_preview: false,
+            library_articles: Vec::new(),
+            library_stats: None,
+            library_loading: false,
+            library_search: String::new(),
+            library_topic: String::new(),
+            library_only_not_uploaded: false,
+            library_word_count_min: String::new(),
+            library_word_count_max: String::new(),
+            library_group_by_topic: true,
+            library_sort_mode: LibrarySortMode::Newest,
+            library_filters_expanded: true,
+            library_dense_mode: false,
+            library_page_index: 0,
+            library_page_cache: None,
+            article_detail: None,
+            lingq_api_key: "SECRET_TOKEN_123".to_owned(),
+            lingq_auth_mode: LingqAuthMode::Token,
+            lingq_username: "user@example.invalid".to_owned(),
+            lingq_password: "SECRET_PASSWORD_123".to_owned(),
+            lingq_connected: true,
+            lingq_collections: Vec::new(),
+            lingq_selected_collection: Some(44),
+            lingq_selected_articles: HashSet::new(),
+            lingq_word_count_min: String::new(),
+            lingq_word_count_max: String::new(),
+            lingq_select_only_not_uploaded: true,
+            show_lingq_settings: false,
+            lingq_loading_collections: false,
+            lingq_uploading: false,
+            next_job_id: 7,
+            queue_paused: true,
+            active_job: None,
+            queued_jobs: VecDeque::from([QueuedJob {
+                id: 6,
+                kind: JobKind::Import,
+                label: "Import queued".to_owned(),
+                total: 1,
+                request: QueuedJobRequest::Import {
+                    articles: vec![ArticleSummary {
+                        url: "https://example.invalid/article".to_owned(),
+                        title: "Queued article".to_owned(),
+                        teaser: "Diagnostic teaser".to_owned(),
+                        author: "Tester".to_owned(),
+                        date: "24.05.2026".to_owned(),
+                        section: "Essay".to_owned(),
+                        source_kind: DiscoverySourceKind::Section,
+                        source_label: "Essays".to_owned(),
+                    }],
+                },
+            }]),
+            completed_jobs: VecDeque::from([CompletedJob {
+                id: 5,
+                kind: JobKind::Upload,
+                label: "Upload completed".to_owned(),
+                summary: "Uploaded 0, failed 1".to_owned(),
+                success: false,
+                recorded_at: "1710000000".to_owned(),
+            }]),
+            last_failed_uploads: vec![UploadFailure {
+                article_id: 9,
+                title: "Upload failed".to_owned(),
+                message: "api_key=SECRET_TOKEN_123 rejected".to_owned(),
+            }],
+            recent_task_failures: VecDeque::from([AppError::new(
+                AppErrorKind::Network,
+                "preview article",
+                "password=SECRET_PASSWORD_123 failed",
+            )
+            .with_details("token=SECRET_TOKEN_123")]),
+            diagnostics_selected_job_id: None,
+        }
+    }
+
+    #[test]
+    fn support_bundle_writes_diagnostics_without_secret_values() {
+        let temp_dir = unique_temp_dir("soziopolis_support_bundle");
+        let bundles_dir = temp_dir.join("support_bundles");
+        let settings_path = temp_dir.join("settings.json");
+        let log_path = temp_dir.join("soziopolis-reader.log");
+        let missing_database_path = temp_dir.join("missing").join("soziopolis_lingq_tool.db");
+        fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+        fs::write(&settings_path, r#"{"last_view":"browse","browse_section":"essays","browse_only_new":true,"lingq_collection_id":44}"#)
+            .expect("settings fixture should be written");
+        fs::write(&log_path, "[1] [INFO] startup without secrets\n")
+            .expect("log fixture should be written");
+        let app = test_app(settings_path.clone());
+        let paths = SupportBundlePaths {
+            bundles_dir,
+            settings_path: Some(settings_path),
+            log_path: Some(log_path),
+            database_path: Some(missing_database_path),
+        };
+
+        let bundle_dir = create_support_bundle_with_paths(&app, &paths)
+            .expect("support bundle should be created");
+
+        assert!(bundle_dir.join("README.txt").exists());
+        assert!(bundle_dir.join("settings.json").exists());
+        assert!(bundle_dir.join("soziopolis-reader.log").exists());
+        assert!(bundle_dir.join("queue-snapshot.json").exists());
+        assert!(bundle_dir.join("task-failures.txt").exists());
+        assert!(!bundle_dir.join("soziopolis_lingq_tool.db").exists());
+
+        let queue_snapshot =
+            fs::read_to_string(bundle_dir.join("queue-snapshot.json")).expect("queue snapshot");
+        assert!(queue_snapshot.contains("Queued article"));
+        assert!(queue_snapshot.contains("Failed import"));
+        assert!(queue_snapshot.contains("[REDACTED]"));
+        assert!(!queue_snapshot.contains("SECRET_TOKEN_123"));
+        assert!(!queue_snapshot.contains("SECRET_PASSWORD_123"));
+
+        let task_failures =
+            fs::read_to_string(bundle_dir.join("task-failures.txt")).expect("task failures");
+        assert!(task_failures.contains("[REDACTED]"));
+        assert!(!task_failures.contains("SECRET_TOKEN_123"));
+        assert!(!task_failures.contains("SECRET_PASSWORD_123"));
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
 }
