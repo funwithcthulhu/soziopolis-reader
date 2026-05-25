@@ -458,7 +458,7 @@ fn parse_article_html(url: &str, html: &str) -> Result<Article> {
     .unwrap_or_default();
 
     let author = collect_authors(&document);
-    let date = first_text(
+    let date = first_article_text(
         &document,
         &[
             ".article-date",
@@ -650,6 +650,133 @@ mod tests {
     }
 
     #[test]
+    fn german_month_date_is_preserved_without_blocking_body_extraction() -> Result<()> {
+        let html = article_html(
+            r#"
+            <article>
+              <p class="article-type">Essay</p>
+              <p class="article-overline">
+                <span class="author-name">Einzel Autor</span>
+              </p>
+              <p class="article-date">24. Mai 2026</p>
+              <h1 class="article-title">Datum mit Monatsnamen</h1>
+              <div class="article-content">
+                <p>Der erste Absatz beschreibt eine getestete Metadatenvariante mit deutschem Monatsnamen und ausreichend langem Fliesstext fuer die Artikelverarbeitung.</p>
+                <p>Der zweite Absatz hält fest, dass das Datum aktuell als rohe Anzeige erhalten bleibt und nicht zur Normalisierung gezwungen wird.</p>
+                <p>Der dritte Absatz ergänzt Beobachtungen zu Redaktion, Quellenlage und technischer Extraktion, damit die Mindestlänge der Verarbeitung stabil bleibt.</p>
+                <p>Der vierte Absatz macht die Fixture deterministisch und vermeidet reale Soziopolis-Texte oder externe Netzwerkzugriffe.</p>
+                <p>Der fünfte Absatz liefert zusätzliche neutrale Wörter über Überschrift, Vorspann, Quellenhinweis und Lesefluss, ohne eine neue fachliche Behauptung einzuführen.</p>
+              </div>
+            </article>
+            "#,
+        );
+
+        let article = parse_article_html("https://www.soziopolis.de/monatsname.html", &html)?;
+
+        assert_eq!(article.author, "Einzel Autor");
+        assert_eq!(article.date, "24. Mai 2026");
+        assert_eq!(article.published_at, "");
+        assert!(article.body_text.contains("deutschem Monatsnamen"));
+        Ok(())
+    }
+
+    #[test]
+    fn optional_author_and_bad_date_do_not_discard_valid_body() -> Result<()> {
+        let html = article_html(
+            r#"
+            <article>
+              <p class="article-type">Essay</p>
+              <p class="article-date">demnaechst</p>
+              <h1 class="article-title">Ohne Autor mit Rohdatum</h1>
+              <div class="article-content">
+                <p>Diese Seite hat absichtlich keine Autorzeile, aber einen ausreichend langen Artikeltext, der weiterhin extrahiert werden soll.</p>
+                <p>Der zweite Absatz beschreibt, dass fehlende Autorinnen oder Autoren aktuell kein Fehlerfall sind und die lokale Speicherung nicht blockieren.</p>
+                <p>Der dritte Absatz stabilisiert die Wortzahl mit weiterer Beschreibung zu Metadaten, redaktioneller Einordnung und Parserverhalten.</p>
+                <p>Der vierte Absatz hält die Fixture synthetisch, klein und frei von kopiertem Artikeltext.</p>
+                <p>Der fünfte Absatz ergänzt neutrale Wörter über Überschrift, Vorspann, Lesefluss und Extraktion, damit nur die Metadatenvariante getestet wird.</p>
+              </div>
+            </article>
+            "#,
+        );
+
+        let article = parse_article_html("https://www.soziopolis.de/ohne-autor.html", &html)?;
+
+        assert_eq!(article.author, "");
+        assert_eq!(article.date, "demnaechst");
+        assert_eq!(article.published_at, "");
+        assert!(article.body_text.contains("keine Autorzeile"));
+        Ok(())
+    }
+
+    #[test]
+    fn multiple_authors_with_und_separator_are_preserved_as_text() -> Result<()> {
+        let html = article_html(
+            r#"
+            <article>
+              <p class="article-type">Essay</p>
+              <p class="article-overline">
+                <span class="author-name">Anna Beispiel und Bernd Muster</span>
+              </p>
+              <time>2026-05-24</time>
+              <h1 class="article-title">Autoren mit Und</h1>
+              <div class="article-content">
+                <p>Der erste Absatz beschreibt eine synthetische Autorenvariante, bei der zwei Namen in einer gemeinsamen Autorzeile stehen.</p>
+                <p>Der zweite Absatz stellt sicher, dass die Autorzeile als vorhandener Text erhalten bleibt und nicht neu interpretiert wird.</p>
+                <p>Der dritte Absatz ergänzt genug Wörter über Soziopolis-nahe Metadaten und Extraktion, damit die bestehende Mindestlänge erreicht wird.</p>
+                <p>Der vierte Absatz dokumentiert den aktuellen Parservertrag ohne eine neue Normalisierung fuer Autorennamen einzuführen.</p>
+                <p>Der fünfte Absatz fügt neutrale Beschreibung zu Überschrift, Vorspann, Lesefluss und Quellenhinweis hinzu, ohne Verhalten oder Bedeutung zu ändern.</p>
+              </div>
+            </article>
+            "#,
+        );
+
+        let article = parse_article_html("https://www.soziopolis.de/autor-und.html", &html)?;
+
+        assert_eq!(article.author, "Anna Beispiel und Bernd Muster");
+        assert_eq!(article.date, "2026-05-24");
+        assert_eq!(article.published_at, "2026-05-24");
+        Ok(())
+    }
+
+    #[test]
+    fn sidebar_author_and_date_do_not_override_article_metadata() -> Result<()> {
+        let html = article_html(
+            r#"
+            <aside>
+              <p class="article-overline"><span class="author-name">Sidebar Name</span></p>
+              <p class="article-date">01.01.2001</p>
+            </aside>
+            <article>
+              <p class="article-type">Essay</p>
+              <p class="article-overline">
+                <span class="author-name">Artikel Name</span>
+              </p>
+              <p class="article-date">24.05.2026</p>
+              <h1 class="article-title">Metadaten im Artikel</h1>
+              <div class="article-content">
+                <p>Der erste Absatz stellt sicher, dass navigierende oder seitliche Seitenelemente nicht als Artikelmetadaten übernommen werden.</p>
+                <p>Der zweite Absatz beschreibt die eigentliche Artikelzone mit genug synthetischem Fliesstext fuer die Verarbeitung.</p>
+                <p>Der dritte Absatz ergänzt weitere Beobachtungen zu Klassen, Autorenzeilen und Datumsfeldern im Parser.</p>
+                <p>Der vierte Absatz bleibt künstlich und klein, damit der Test keine kopierten Inhalte enthält.</p>
+                <p>Der fünfte Absatz liefert neutrale Wörter über Überschrift, Vorspann, Lesefluss und Extraktion, damit die Metadatenprüfung stabil bleibt.</p>
+                <p>Der sechste Absatz beschreibt nochmals die Artikelzone, die bereinigte Textmenge und den synthetischen Charakter dieser Fixture.</p>
+                <p>Der siebte Absatz verhindert, dass die Prüfung versehentlich nur an der Mindestlänge statt an der Metadatenquelle scheitert.</p>
+              </div>
+            </article>
+            "#,
+        );
+
+        let article = parse_article_html("https://www.soziopolis.de/metadaten.html", &html)?;
+
+        assert_eq!(article.author, "Artikel Name");
+        assert_eq!(article.date, "24.05.2026");
+        assert_eq!(article.published_at, "2026-05-24");
+        assert!(!article.author.contains("Sidebar"));
+        assert_ne!(article.date, "01.01.2001");
+        Ok(())
+    }
+
+    #[test]
     fn unexpected_article_container_markup_reports_missing_body() {
         let html = r#"
             <!doctype html>
@@ -729,6 +856,16 @@ mod tests {
             error.to_string(),
             "article extraction produced too little text for https://www.soziopolis.de/kurz.html"
         );
+    }
+
+    fn article_html(body: &str) -> String {
+        format!(
+            r#"<!doctype html>
+            <html lang="de">
+            <head><meta charset="utf-8"></head>
+            <body>{body}</body>
+            </html>"#
+        )
     }
 
     #[test]

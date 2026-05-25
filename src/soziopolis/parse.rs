@@ -61,8 +61,10 @@ pub(super) fn dedupe_lines(lines: &mut Vec<String>) {
 
 pub(super) fn collect_authors(document: &Html) -> String {
     let primary_selector = Selector::parse("p.article-overline .author-name").expect("selector");
-    let primary = document
-        .select(&primary_selector)
+    let primary = article_metadata_root(document)
+        .map(|root| root.select(&primary_selector).collect::<Vec<_>>())
+        .unwrap_or_else(|| document.select(&primary_selector).collect::<Vec<_>>())
+        .into_iter()
         .map(collect_text)
         .map(|value| clean_whitespace(&value))
         .filter(|value| !value.is_empty())
@@ -76,7 +78,10 @@ pub(super) fn collect_authors(document: &Html) -> String {
             .expect("selector");
     let mut authors = Vec::new();
     let mut seen = HashSet::new();
-    for node in document.select(&fallback_selector) {
+    let fallback_nodes = article_metadata_root(document)
+        .map(|root| root.select(&fallback_selector).collect::<Vec<_>>())
+        .unwrap_or_else(|| document.select(&fallback_selector).collect::<Vec<_>>());
+    for node in fallback_nodes {
         let value = clean_whitespace(&collect_text(node));
         if value.is_empty() || !seen.insert(value.clone()) {
             continue;
@@ -84,6 +89,32 @@ pub(super) fn collect_authors(document: &Html) -> String {
         authors.push(value);
     }
     authors.join(", ")
+}
+
+pub(super) fn first_article_text(document: &Html, selectors: &[&str]) -> Option<String> {
+    if let Some(root) = article_metadata_root(document) {
+        for selector in selectors {
+            let selector = Selector::parse(selector).ok()?;
+            let value = root.select(&selector).find_map(|node| {
+                let attr_content = node.value().attr("content").map(clean_whitespace);
+                let text_content =
+                    Some(clean_whitespace(&collect_text(node))).filter(|value| !value.is_empty());
+                attr_content.or(text_content)
+            });
+            if let Some(value) = value.filter(|value| !value.is_empty()) {
+                return Some(value);
+            }
+        }
+    }
+    first_text(document, selectors)
+}
+
+fn article_metadata_root(document: &Html) -> Option<ElementRef<'_>> {
+    let article_selector = Selector::parse("article").ok()?;
+    let content_selector = Selector::parse(".article-content").ok()?;
+    document
+        .select(&article_selector)
+        .find(|article| article.select(&content_selector).next().is_some())
 }
 
 pub(super) fn extract_section(document: &Html) -> Option<String> {

@@ -1113,6 +1113,7 @@ fn create_support_bundle_with_paths(
     };
     let queue_snapshot_json =
         serde_json::to_string_pretty(&queue_snapshot).map_err(|e| e.to_string())?;
+    let queue_snapshot_json = logging::sanitize_message(&queue_snapshot_json);
     fs::write(bundle_dir.join("queue-snapshot.json"), queue_snapshot_json)
         .map_err(|e| e.to_string())?;
 
@@ -1248,7 +1249,7 @@ mod tests {
                 total: 1,
                 request: QueuedJobRequest::Import {
                     articles: vec![ArticleSummary {
-                        url: "https://example.invalid/article".to_owned(),
+                        url: "https://example.invalid/article?api_key=SECRET_TOKEN_123".to_owned(),
                         title: "Queued article".to_owned(),
                         teaser: "Diagnostic teaser".to_owned(),
                         author: "Tester".to_owned(),
