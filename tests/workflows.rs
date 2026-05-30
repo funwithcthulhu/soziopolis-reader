@@ -205,3 +205,81 @@ fn queue_snapshot_and_history_round_trip_through_context() {
     let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
     let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
 }
+
+#[test]
+fn failed_queue_errors_persist_and_clear_after_retry_success_snapshot() {
+    let (ctx, path) = temp_context("soziopolis_workflow_retry_queue");
+    let failed_snapshot = QueueSnapshot {
+        next_job_id: 21,
+        queue_paused: false,
+        queued_jobs: vec![],
+        completed_jobs: vec![CompletedJob {
+            id: 20,
+            kind: JobKind::Import,
+            label: "Import failed".to_owned(),
+            summary: "Saved 0, failed 1: network timeout".to_owned(),
+            success: false,
+            recorded_at: "1710000000".to_owned(),
+        }],
+        failed_fetches: vec![FailedFetchItem {
+            url: "https://example.com/retry-import".to_owned(),
+            title: "Retry import".to_owned(),
+            category: "network".to_owned(),
+            message: "network timeout".to_owned(),
+        }],
+        failed_uploads: vec![UploadFailure {
+            article_id: 42,
+            title: "Retry upload".to_owned(),
+            message: "LingQ rejected request".to_owned(),
+        }],
+    };
+
+    ctx.db
+        .with_db(|db| {
+            let mut repository = JobRepository::new(db);
+            repository.save_snapshot(&failed_snapshot)
+        })
+        .expect("failed queue state should save");
+
+    let restored = ctx
+        .db
+        .with_db(|db| JobRepository::new(db).load_snapshot())
+        .expect("failed queue state should load");
+    assert_eq!(restored.failed_fetches[0].message, "network timeout");
+    assert_eq!(restored.failed_uploads[0].message, "LingQ rejected request");
+
+    let retried_snapshot = QueueSnapshot {
+        next_job_id: 22,
+        queue_paused: false,
+        queued_jobs: vec![],
+        completed_jobs: vec![CompletedJob {
+            id: 21,
+            kind: JobKind::Upload,
+            label: "Retry succeeded".to_owned(),
+            summary: "Uploaded 1, failed 0, canceled no".to_owned(),
+            success: true,
+            recorded_at: "1710000001".to_owned(),
+        }],
+        failed_fetches: vec![],
+        failed_uploads: vec![],
+    };
+
+    ctx.db
+        .with_db(|db| {
+            let mut repository = JobRepository::new(db);
+            repository.save_snapshot(&retried_snapshot)
+        })
+        .expect("successful retry queue state should save");
+
+    let restored_after_retry = ctx
+        .db
+        .with_db(|db| JobRepository::new(db).load_snapshot())
+        .expect("successful retry queue state should load");
+    assert!(restored_after_retry.failed_fetches.is_empty());
+    assert!(restored_after_retry.failed_uploads.is_empty());
+    assert!(restored_after_retry.completed_jobs[0].success);
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+}

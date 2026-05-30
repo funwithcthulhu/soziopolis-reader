@@ -1075,12 +1075,12 @@ fn create_support_bundle_with_paths(
     if let Some(path) = &paths.settings_path
         && path.exists()
     {
-        let _ = fs::copy(path, bundle_dir.join("settings.json"));
+        let _ = copy_sanitized_text_file(path, &bundle_dir.join("settings.json"));
     }
     if let Some(path) = &paths.log_path
         && path.exists()
     {
-        let _ = fs::copy(path, bundle_dir.join("soziopolis-reader.log"));
+        let _ = copy_sanitized_text_file(path, &bundle_dir.join("soziopolis-reader.log"));
     }
     if let Some(path) = &paths.database_path
         && path.exists()
@@ -1138,6 +1138,14 @@ fn create_support_bundle_with_paths(
     }
 
     Ok(bundle_dir)
+}
+
+fn copy_sanitized_text_file(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> std::io::Result<()> {
+    let raw = fs::read_to_string(source)?;
+    fs::write(destination, logging::sanitize_message(&raw))
 }
 
 fn redact_failed_fetch_item(item: &FailedFetchItem) -> FailedFetchItem {
@@ -1291,10 +1299,13 @@ mod tests {
         let log_path = temp_dir.join("soziopolis-reader.log");
         let missing_database_path = temp_dir.join("missing").join("soziopolis_lingq_tool.db");
         fs::create_dir_all(&temp_dir).expect("temp dir should be created");
-        fs::write(&settings_path, r#"{"last_view":"browse","browse_section":"essays","browse_only_new":true,"lingq_collection_id":44}"#)
+        fs::write(&settings_path, r#"{"last_view":"browse","browse_section":"essays","browse_only_new":true,"lingq_collection_id":44,"legacy_token":"SECRET_TOKEN_123"}"#)
             .expect("settings fixture should be written");
-        fs::write(&log_path, "[1] [INFO] startup without secrets\n")
-            .expect("log fixture should be written");
+        fs::write(
+            &log_path,
+            "[1] [INFO] Authorization: Token SECRET_TOKEN_123 credential=SECRET_PASSWORD_123\n",
+        )
+        .expect("log fixture should be written");
         let app = test_app(settings_path.clone());
         let paths = SupportBundlePaths {
             bundles_dir,
@@ -1321,11 +1332,65 @@ mod tests {
         assert!(!queue_snapshot.contains("SECRET_TOKEN_123"));
         assert!(!queue_snapshot.contains("SECRET_PASSWORD_123"));
 
+        let bundled_settings =
+            fs::read_to_string(bundle_dir.join("settings.json")).expect("settings");
+        assert!(bundled_settings.contains("[REDACTED]"));
+        assert!(!bundled_settings.contains("SECRET_TOKEN_123"));
+
+        let bundled_log =
+            fs::read_to_string(bundle_dir.join("soziopolis-reader.log")).expect("log");
+        assert!(bundled_log.contains("[REDACTED]"));
+        assert!(!bundled_log.contains("SECRET_TOKEN_123"));
+        assert!(!bundled_log.contains("SECRET_PASSWORD_123"));
+
         let task_failures =
             fs::read_to_string(bundle_dir.join("task-failures.txt")).expect("task failures");
         assert!(task_failures.contains("[REDACTED]"));
         assert!(!task_failures.contains("SECRET_TOKEN_123"));
         assert!(!task_failures.contains("SECRET_PASSWORD_123"));
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn successful_retry_results_clear_failed_import_and_upload_state() {
+        let temp_dir = unique_temp_dir("soziopolis_retry_state");
+        let mut app = test_app(temp_dir.join("settings.json"));
+
+        assert_eq!(app.failed_fetches.len(), 1);
+        assert_eq!(app.last_failed_uploads.len(), 1);
+
+        let _ = app.update(Message::BatchFetched {
+            job_id: 8,
+            saved_count: 1,
+            saved_articles: Vec::new(),
+            skipped_existing: 0,
+            skipped_out_of_range: 0,
+            failed: Vec::new(),
+            canceled: false,
+        });
+
+        assert!(app.failed_fetches.is_empty());
+        assert!(
+            app.completed_jobs
+                .front()
+                .is_some_and(|job| job.kind == JobKind::Import && job.success)
+        );
+
+        let _ = app.update(Message::BatchUploaded {
+            job_id: 9,
+            uploaded: 1,
+            successes: Vec::new(),
+            failed: Vec::new(),
+            canceled: false,
+        });
+
+        assert!(app.last_failed_uploads.is_empty());
+        assert!(
+            app.completed_jobs
+                .front()
+                .is_some_and(|job| job.kind == JobKind::Upload && job.success)
+        );
 
         let _ = fs::remove_dir_all(temp_dir);
     }

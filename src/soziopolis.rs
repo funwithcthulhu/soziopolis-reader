@@ -611,6 +611,30 @@ mod tests {
     }
 
     #[test]
+    fn dated_article_fixture_extracts_body_without_nav_or_footer_cruft() -> Result<()> {
+        let html = include_str!("../tests/fixtures/soziopolis_article_2026_05_24_fixture.html");
+
+        let article = parse_article_html("https://www.soziopolis.de/lokale-zustaende.html", html)?;
+
+        assert_eq!(article.title, "Lokale Zustaende");
+        assert_eq!(
+            article.subtitle,
+            "Eine synthetische Pruefung der Artikelgrenzen"
+        );
+        assert_eq!(article.author, "Lea Test");
+        assert_eq!(article.date, "24.05.2026");
+        assert_eq!(article.published_at, "2026-05-24");
+        assert_eq!(article.section, "Essay");
+        assert!(article.body_text.contains("aktuelle Artikelstruktur"));
+        assert!(article.body_text.contains("bestehende Mindestlaenge"));
+        assert!(!article.body_text.contains("Startseite"));
+        assert!(!article.body_text.contains("Teilen auf Facebook"));
+        assert!(!article.body_text.contains("ISSN 2509-5196"));
+        assert!(!article.body_text.contains("Newsletter abonnieren"));
+        Ok(())
+    }
+
+    #[test]
     fn invalid_article_url_reports_network_failure_without_live_request() {
         let client = SoziopolisClient::new().expect("client should build");
 
@@ -903,6 +927,46 @@ mod tests {
         assert_eq!(articles[1].author, "Test Autorin");
         assert_eq!(articles[1].date, "17.02.2026");
         assert!(articles[1].teaser.contains("Selbstvermessung"));
+        Ok(())
+    }
+
+    #[test]
+    fn dated_section_fixture_extracts_listing_metadata_without_page_chrome() -> Result<()> {
+        let client = SoziopolisClient::new()?;
+        let document = Html::parse_document(include_str!(
+            "../tests/fixtures/soziopolis_section_2026_05_24_fixture.html"
+        ));
+
+        let mut seen = HashSet::new();
+        let mut articles = Vec::new();
+        let mut report = DiscoveryReport::default();
+
+        client.collect_articles_from_document(
+            &document,
+            ArticleCollectionTarget {
+                fallback_section: Some("Essays"),
+                source_url: "https://www.soziopolis.de/texte/essay.html",
+                source_kind: DiscoverySourceKind::Section,
+                limit: 10,
+                seen: &mut seen,
+                articles: &mut articles,
+                report: &mut report,
+            },
+        );
+
+        assert_eq!(articles.len(), 1);
+        assert_eq!(report.section_articles, 1);
+        assert_eq!(
+            articles[0].url,
+            "https://www.soziopolis.de/lokale-zustaende.html"
+        );
+        assert_eq!(articles[0].title, "Lokale Zustaende");
+        assert_eq!(articles[0].author, "Lea Test");
+        assert_eq!(articles[0].date, "24.05.2026");
+        assert_eq!(articles[0].section, "Essay");
+        assert!(articles[0].teaser.contains("lokalen Datenpfaden"));
+        assert!(!articles[0].teaser.contains("Newsletter"));
+        assert!(!articles[0].teaser.contains("Impressum"));
         Ok(())
     }
 

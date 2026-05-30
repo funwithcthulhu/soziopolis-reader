@@ -179,4 +179,31 @@ mod tests {
         let _ = std::fs::remove_dir(path.parent().expect("nested parent"));
         let _ = std::fs::remove_dir(dir);
     }
+
+    #[test]
+    fn settings_json_does_not_store_lingq_token_material() {
+        let dir = unique_temp_path("soziopolis_settings_no_token");
+        let path = dir.join("settings.json");
+        let store = SettingsStore::from_parts(
+            path.clone(),
+            AppSettings {
+                last_view: "lingq".to_owned(),
+                browse_section: "essays".to_owned(),
+                browse_only_new: false,
+                lingq_collection_id: Some(44),
+            },
+        );
+
+        store.save().expect("settings should save");
+
+        let raw = std::fs::read_to_string(&path).expect("settings json should be readable");
+        assert!(raw.contains("lingq_collection_id"));
+        assert!(!raw.contains("SECRET_TOKEN_123"));
+        assert!(!raw.to_lowercase().contains("token"));
+        assert!(!raw.to_lowercase().contains("password"));
+        assert!(!raw.to_lowercase().contains("api_key"));
+
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_dir(dir);
+    }
 }

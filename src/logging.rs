@@ -94,7 +94,7 @@ fn redaction_patterns() -> &'static [Regex] {
             Regex::new(r#"(?i)(?P<prefix>authorization\s*[:=]\s*token\s+)[A-Za-z0-9._-]+"#)
                 .expect("authorization token redaction regex"),
             Regex::new(
-                r#"(?i)(?P<prefix>(?:api[_ -]?key|token|password)\s*[:=]\s*["']?)[^"',\s]+"#,
+                r#"(?i)(?P<prefix>["']?(?:api[_ -]?key|[\w.-]*token|[\w.-]*password|credential)["']?\s*[:=]\s*["']?)[^"',\s]+"#,
             )
             .expect("generic secret redaction regex"),
         ]
@@ -136,12 +136,13 @@ mod tests {
 
     #[test]
     fn sanitize_message_redacts_common_secret_patterns() {
-        let message = "Authorization: Token abc123 password=secret api_key:\"xyz\" token=mytoken";
+        let message = "Authorization: Token abc123 password=secret api_key:\"xyz\" token=mytoken credential=stored";
         let sanitized = sanitize_message(message);
         assert!(!sanitized.contains("abc123"));
         assert!(!sanitized.contains("secret"));
         assert!(!sanitized.contains("xyz"));
         assert!(!sanitized.contains("mytoken"));
+        assert!(!sanitized.contains("stored"));
         assert!(sanitized.contains("[REDACTED]"));
     }
 }
